@@ -38,3 +38,16 @@ def test_draw_run_play():
     fig = draw_play_state(play, prev_yardline=30)
     assert fig is not None
     plt.close(fig)
+
+
+import json
+
+def test_all_actual_plays_render():
+    """Smoke test: every play in the dataset renders without error."""
+    with open("checkpoints/adversarial/phase_play_by_play.json") as f:
+        plays = json.load(f)
+    for i, play in enumerate(plays):
+        prev_yl = plays[i-1]["yardline"] if i > 0 and plays[i-1].get("drive") == play.get("drive") else None
+        fig = draw_play_state(play, prev_yardline=prev_yl)
+        assert fig is not None, f"Play {i} failed to render"
+        plt.close(fig)

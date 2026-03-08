@@ -9,9 +9,15 @@ from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
-from models import GameAction, GameObservation, PlayRecord
-from validation import validate_offense, validate_defense
-from play_outcome_model import PlayOutcomeModel
+
+try:
+    from ..models import GameAction, GameObservation, PlayRecord
+    from ..validation import validate_offense, validate_defense
+    from ..play_outcome_model import PlayOutcomeModel
+except ImportError:
+    from models import GameAction, GameObservation, PlayRecord
+    from validation import validate_offense, validate_defense
+    from play_outcome_model import PlayOutcomeModel
 
 
 # Field goal make probability by distance (yards from goal line to kick spot is ~17 + distance)

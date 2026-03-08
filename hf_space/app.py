@@ -1,14 +1,5 @@
-import uvicorn
-from openenv.core.env_server import create_app
-from environment import FootballDriveEnvironment
-from models import GameAction, GameObservation
-
-app = create_app(FootballDriveEnvironment, GameAction, GameObservation, env_name="football_drive")
-
-
-def main():
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
+"""Entry point — re-exports the FastAPI app from server.app."""
+from server.app import app, main
 
 if __name__ == "__main__":
     main()

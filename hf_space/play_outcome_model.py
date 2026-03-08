@@ -22,8 +22,12 @@ import numpy as np
 
 
 class PlayOutcomeModel:
-    def __init__(self, data_dir: str = "data/"):
-        data_path = pathlib.Path(data_dir)
+    def __init__(self, data_dir: str = None):
+        if data_dir is None:
+            # Auto-detect: look for model files in same directory as this module
+            data_path = pathlib.Path(__file__).parent
+        else:
+            data_path = pathlib.Path(data_dir)
 
         # Load metadata
         with open(data_path / "model_features.json") as f:
