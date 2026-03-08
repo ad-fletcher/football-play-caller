@@ -1,5 +1,5 @@
 from formations import get_offense_positions, get_defense_positions
-from play_motion import get_motion_trails
+from play_motion import get_motion_trails, get_ball_flight
 
 def _make_play(play_type="pass", designed_pass="short_middle", run_concept="none",
                off_formation="SHOTGUN", def_formation="4-3",
@@ -73,3 +73,24 @@ def test_pass_rushers_move_toward_qb():
     dl_trails = [t for t in trails if t[2].startswith("DL") and t[3] == "defense"]
     for t in dl_trails:
         assert t[1][0] < t[0][0], f"{t[2]} should rush toward LOS"
+
+def test_pass_play_has_ball_flight():
+    play = _make_play(play_type="pass", designed_pass="short_middle", yards=8.0)
+    ball_x = play["yardline"] + 10
+    off_pos = get_offense_positions(play["off_formation"], ball_x)
+    def_pos = get_defense_positions(play["def_formation"], ball_x)
+    trails = get_motion_trails(play, off_pos, def_pos)
+    flight = get_ball_flight(play, trails)
+    assert flight is not None
+    start, end = flight
+    assert len(start) == 2
+    assert len(end) == 2
+
+def test_run_play_no_ball_flight():
+    play = _make_play(play_type="run", run_concept="INSIDE ZONE")
+    ball_x = play["yardline"] + 10
+    off_pos = get_offense_positions(play["off_formation"], ball_x)
+    def_pos = get_defense_positions(play["def_formation"], ball_x)
+    trails = get_motion_trails(play, off_pos, def_pos)
+    flight = get_ball_flight(play, trails)
+    assert flight is None

@@ -414,3 +414,19 @@ def get_motion_trails(
         def_trails = _fg_punt_defense_trails(def_positions)
 
     return off_trails + def_trails
+
+
+def get_ball_flight(play, trails):
+    """Return ((qb_end_x, qb_end_y), (wr_end_x, wr_end_y)) for pass plays, else None."""
+    if play.get("off_playType") not in ("pass", "play_action"):
+        return None
+    qb_end = None
+    wr_end = None
+    for start, end, role, side, is_key in trails:
+        if side == "offense" and role == "QB":
+            qb_end = end
+        if side == "offense" and is_key and role not in ("QB", "RB", "FB", "C", "LG", "RG", "LT", "RT"):
+            wr_end = end
+    if qb_end is None or wr_end is None:
+        return None
+    return (qb_end, wr_end)
