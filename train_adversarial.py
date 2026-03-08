@@ -32,11 +32,19 @@ LORA_RANK = 32
 OUTPUT_DIR = "checkpoints/adversarial"
 
 # Training
-EPISODES_PER_ROUND = 64       # drives per collection round
-NUM_ROUNDS = 100               # total training rounds
+EPISODES_PER_ROUND = 16        # drives per collection round
+NUM_ROUNDS = 60                # total training rounds
 LEARNING_RATE = 1e-5
 MAX_COMPLETION_LENGTH = 150
 TEMPERATURE = 0.7
+
+# Phased training: (start_round, end_round, train_offense, train_defense)
+TRAINING_PHASES = [
+    (1,  10, True,  True),   # Phase 0: both learn basics (valid JSON, formations)
+    (11, 30, True,  False),  # Phase 1: offense learns to exploit static defense
+    (31, 50, False, True),   # Phase 2: defense adapts to trained offense
+    (51, 60, True,  True),   # Phase 3: co-adaptation
+]
 
 # Unsloth
 LOAD_4BIT = True
@@ -265,8 +273,20 @@ def main():
     # ── Training loop ──
     log = TrainingLog()
     print(f"Starting adversarial training: {NUM_ROUNDS} rounds, {EPISODES_PER_ROUND} episodes/round")
+    print(f"Training phases:")
+    for start, end, train_off, train_def in TRAINING_PHASES:
+        off_str = "TRAIN" if train_off else "frozen"
+        def_str = "TRAIN" if train_def else "frozen"
+        print(f"  Rounds {start}-{end}: offense={off_str}, defense={def_str}")
 
     for round_num in range(1, NUM_ROUNDS + 1):
+        # Determine current phase
+        train_offense, train_defense = True, True
+        for start, end, t_off, t_def in TRAINING_PHASES:
+            if start <= round_num <= end:
+                train_offense, train_defense = t_off, t_def
+                break
+
         # Collect episodes (inference mode — disables dropout, enables 2x faster generation)
         FastLanguageModel.for_inference(off_model)
         FastLanguageModel.for_inference(def_model)
@@ -275,19 +295,24 @@ def main():
             EPISODES_PER_ROUND, device,
         )
 
-        # Update offense (training mode — re-enables LoRA gradients)
-        FastLanguageModel.for_training(off_model)
-        off_loss = reinforce_update(off_model, off_tokenizer, off_optimizer, off_episodes, device)
+        # Update offense
+        off_loss = 0.0
+        if train_offense:
+            FastLanguageModel.for_training(off_model)
+            off_loss = reinforce_update(off_model, off_tokenizer, off_optimizer, off_episodes, device)
 
         # Update defense
-        FastLanguageModel.for_training(def_model)
-        def_loss = reinforce_update(def_model, def_tokenizer, def_optimizer, def_episodes, device)
+        def_loss = 0.0
+        if train_defense:
+            FastLanguageModel.for_training(def_model)
+            def_loss = reinforce_update(def_model, def_tokenizer, def_optimizer, def_episodes, device)
 
         # Log
         off_mean = np.mean([r for _, _, r in off_episodes])
         def_mean = np.mean([r for _, _, r in def_episodes])
         log.log_round(round_num, off_episodes, def_episodes, off_loss, def_loss, {})
-        print(f"Round {round_num}/{NUM_ROUNDS} | Off reward: {off_mean:.3f} | Def reward: {def_mean:.3f} | Off loss: {off_loss:.4f} | Def loss: {def_loss:.4f} | Episodes: {len(off_episodes)} plays")
+        phase_str = f"[off={'T' if train_offense else 'F'} def={'T' if train_defense else 'F'}]"
+        print(f"Round {round_num}/{NUM_ROUNDS} {phase_str} | Off reward: {off_mean:.3f} | Def reward: {def_mean:.3f} | Off loss: {off_loss:.4f} | Def loss: {def_loss:.4f} | Episodes: {len(off_episodes)} plays")
 
         # Save checkpoints
         if round_num % SAVE_EVERY == 0:
