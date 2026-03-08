@@ -220,6 +220,14 @@ def run_eval(n_drives, off_checkpoint, def_checkpoint):
             flush=True,
         )
 
+        # Save incrementally every 10 drives
+        if drive_num % 10 == 0 or drive_num == n_drives:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            with open(os.path.join(OUTPUT_DIR, "eval_play_by_play.json"), "w") as f:
+                json.dump(all_plays, f, indent=1)
+            with open(os.path.join(OUTPUT_DIR, "eval_drive_summaries.json"), "w") as f:
+                json.dump(drive_summaries, f, indent=2)
+
     elapsed = time.time() - start_time
     print(f"\nDone! {n_drives} drives in {elapsed:.1f}s ({elapsed/n_drives:.2f}s/drive)")
 
