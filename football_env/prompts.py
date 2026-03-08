@@ -26,7 +26,13 @@ For punt (4th down only):
 For field_goal (4th down only):
 {"offenseFormation": "<FORM>", "playType": "field_goal"}
 
+RULES:
+- punt and field_goal are ONLY valid on 4th down. On 1st-3rd down, use run, pass, or play_action.
+- For run plays, do NOT include designedPass or receiverAlignment.
+- For pass/play_action plays, do NOT include pff_runConceptPrimary.
+
 Valid formations: """ + ", ".join(VALID_OFFENSE_FORMATIONS) + """
+Valid play types: """ + ", ".join(VALID_PLAY_TYPES) + """
 Valid pass routes: """ + ", ".join([d for d in VALID_DESIGNED_PASS if d != "none"]) + """
 Valid alignments: """ + ", ".join([r for r in VALID_RECEIVER_ALIGNMENT if r != "unknown"]) + """
 Valid run concepts: """ + ", ".join([r for r in VALID_RUN_CONCEPTS if r not in ("none", "UNDEFINED")])
@@ -38,12 +44,46 @@ You are an NFL defensive coordinator. Given the game situation and the offense's
 Respond with ONLY a JSON object:
 {"defFormation": "<FORM>", "pff_manZone": "Man|Zone", "pff_passCoverage": "<COVERAGE>", "passRushers": <N>}
 
+RULES:
+- If pff_manZone is "Man", pff_passCoverage MUST be one of: """ + ", ".join(VALID_MAN_COVERAGES) + """
+- If pff_manZone is "Zone", pff_passCoverage MUST be one of: """ + ", ".join(VALID_ZONE_COVERAGES) + """
+- passRushers must be in valid range for your formation (see below).
+
 Valid formations: """ + ", ".join(VALID_DEF_FORMATIONS) + """
-Man coverages: """ + ", ".join(VALID_MAN_COVERAGES) + """
-Zone coverages: """ + ", ".join(VALID_ZONE_COVERAGES) + """
-Pass rushers must be in valid range for your formation."""
+Pass rushers by formation: """ + ", ".join(f"{k}: {lo}-{hi}" for k, (lo, hi) in RUSHER_RANGES.items())
 
 
+# ──────────────────────────────────────────────
+# Helpers for nearest-valid fallback
+# ──────────────────────────────────────────────
+def _nearest(value: str, valid: list[str], default: str) -> str:
+    """Return value if valid, else default."""
+    if value in valid:
+        return value
+    # Try case-insensitive match
+    lower_map = {v.lower(): v for v in valid}
+    if value.lower() in lower_map:
+        return lower_map[value.lower()]
+    return default
+
+
+def _clamp_rushers(rushers: int, formation: str) -> int:
+    """Clamp pass rushers to valid range for formation."""
+    lo, hi = RUSHER_RANGES.get(formation, (3, 6))
+    return max(lo, min(hi, rushers))
+
+
+def _safe_int(val, default: int) -> int:
+    """Safely convert to int."""
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
+# ──────────────────────────────────────────────
+# Observation formatters
+# ──────────────────────────────────────────────
 def format_offense_obs(obs: GameObservation) -> list[dict]:
     """Format observation as chat messages for the offense LLM."""
     situation = (
@@ -88,30 +128,61 @@ def format_defense_obs(obs: GameObservation) -> list[dict]:
     ]
 
 
+# ──────────────────────────────────────────────
+# Response parsers (robust — never crash)
+# ──────────────────────────────────────────────
 def parse_offense_response(text: str) -> OffenseAction:
-    """Parse LLM text output into OffenseAction. Returns defaults for unparseable input."""
+    """Parse LLM text output into OffenseAction. Falls back to valid defaults for any bad value."""
     parsed = _extract_json(text)
     if parsed is None:
         return OffenseAction(offenseFormation="SHOTGUN", playType="pass", designedPass="short_middle", receiverAlignment="3x1")
+
+    formation = _nearest(str(parsed.get("offenseFormation", "SHOTGUN")), VALID_OFFENSE_FORMATIONS, "SHOTGUN")
+    play_type = _nearest(str(parsed.get("playType", "pass")), VALID_PLAY_TYPES, "pass")
+
+    if play_type in ("pass", "play_action"):
+        designed_pass = _nearest(str(parsed.get("designedPass", "short_middle")), VALID_DESIGNED_PASS, "short_middle")
+        receiver_align = _nearest(str(parsed.get("receiverAlignment", "3x1")), VALID_RECEIVER_ALIGNMENT, "3x1")
+        run_concept = "none"
+    elif play_type == "run":
+        designed_pass = "none"
+        receiver_align = "none"
+        run_concept = _nearest(str(parsed.get("pff_runConceptPrimary", "INSIDE ZONE")), VALID_RUN_CONCEPTS, "INSIDE ZONE")
+    else:  # punt, field_goal
+        designed_pass = "none"
+        receiver_align = "none"
+        run_concept = "none"
+
     return OffenseAction(
-        offenseFormation=parsed.get("offenseFormation", "SHOTGUN"),
-        playType=parsed.get("playType", "pass"),
-        designedPass=parsed.get("designedPass", "none"),
-        receiverAlignment=parsed.get("receiverAlignment", "none"),
-        pff_runConceptPrimary=parsed.get("pff_runConceptPrimary", "none"),
+        offenseFormation=formation,
+        playType=play_type,
+        designedPass=designed_pass,
+        receiverAlignment=receiver_align,
+        pff_runConceptPrimary=run_concept,
     )
 
 
 def parse_defense_response(text: str) -> DefenseAction:
-    """Parse LLM text output into DefenseAction. Returns defaults for unparseable input."""
+    """Parse LLM text output into DefenseAction. Falls back to valid defaults for any bad value."""
     parsed = _extract_json(text)
     if parsed is None:
         return DefenseAction(defFormation="4-3", pff_manZone="Zone", pff_passCoverage="Cover-3", passRushers=4)
+
+    formation = _nearest(str(parsed.get("defFormation", "4-3")), VALID_DEF_FORMATIONS, "4-3")
+    man_zone = _nearest(str(parsed.get("pff_manZone", "Zone")), VALID_MAN_ZONE, "Zone")
+
+    # Constrain coverage to match man/zone
+    valid_covs = VALID_MAN_COVERAGES if man_zone == "Man" else VALID_ZONE_COVERAGES
+    default_cov = "Cover-1" if man_zone == "Man" else "Cover-3"
+    coverage = _nearest(str(parsed.get("pff_passCoverage", default_cov)), valid_covs, default_cov)
+
+    rushers = _clamp_rushers(_safe_int(parsed.get("passRushers", 4), 4), formation)
+
     return DefenseAction(
-        defFormation=parsed.get("defFormation", "4-3"),
-        pff_manZone=parsed.get("pff_manZone", "Zone"),
-        pff_passCoverage=parsed.get("pff_passCoverage", "Cover-3"),
-        passRushers=int(parsed.get("passRushers", 4)),
+        defFormation=formation,
+        pff_manZone=man_zone,
+        pff_passCoverage=coverage,
+        passRushers=rushers,
     )
 
 
