@@ -328,7 +328,6 @@ def main():
         model=model,
         processing_class=tokenizer,
         reward_funcs=[format_reward, play_reward],
-        reward_weights=[1.0, 1.0],
         args=training_args,
         train_dataset=dataset,
         callbacks=[reward_logger],
