@@ -35,7 +35,7 @@ OUTPUT_DIR = "checkpoints/adversarial"
 EPISODES_PER_ROUND = 16        # drives per collection round
 NUM_ROUNDS = 60                # total training rounds
 LEARNING_RATE = 1e-5
-MAX_COMPLETION_LENGTH = 150
+MAX_COMPLETION_LENGTH = 80
 TEMPERATURE = 0.7
 
 # Phased training: (start_round, end_round, train_offense, train_defense)
@@ -57,6 +57,24 @@ SAVE_EVERY = 10  # save every N rounds
 # ──────────────────────────────────────────────
 # Episode Collection
 # ──────────────────────────────────────────────
+def _get_stop_token_ids(tokenizer):
+    """Get token IDs that should stop generation (closing brace = end of JSON)."""
+    stop_ids = []
+    for token in ["}", "}\n", "} ", "}\n\n"]:
+        ids = tokenizer.encode(token, add_special_tokens=False)
+        if ids:
+            stop_ids.append(ids[-1])
+    return list(set(stop_ids)) if stop_ids else None
+
+
+def _truncate_at_json_end(text: str) -> str:
+    """Truncate response after first complete JSON object."""
+    brace_end = text.find("}")
+    if brace_end != -1:
+        return text[:brace_end + 1]
+    return text
+
+
 def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_episodes, device):
     """Roll out full drives, collect (prompt_ids, response_ids, reward) per agent."""
     from football_env.models import GameAction
@@ -64,6 +82,10 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
         format_offense_obs, format_defense_obs,
         parse_offense_response, parse_defense_response,
     )
+
+    # Pre-compute stop tokens
+    off_stop_ids = _get_stop_token_ids(off_tokenizer)
+    def_stop_ids = _get_stop_token_ids(def_tokenizer)
 
     offense_episodes = []
     defense_episodes = []
@@ -81,24 +103,24 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
             # Generate offense action
             off_text = off_tokenizer.apply_chat_template(off_messages, tokenize=False, add_generation_prompt=True)
             off_ids = off_tokenizer(off_text, return_tensors="pt").to(device)
+            gen_kwargs = dict(max_new_tokens=MAX_COMPLETION_LENGTH, temperature=TEMPERATURE, do_sample=True)
+            if off_stop_ids:
+                gen_kwargs["eos_token_id"] = off_stop_ids
             with torch.no_grad():
-                off_out = off_model.generate(
-                    **off_ids, max_new_tokens=MAX_COMPLETION_LENGTH,
-                    temperature=TEMPERATURE, do_sample=True,
-                )
+                off_out = off_model.generate(**off_ids, **gen_kwargs)
             off_response_ids = off_out[0][off_ids["input_ids"].shape[1]:]
-            off_response_text = off_tokenizer.decode(off_response_ids, skip_special_tokens=True)
+            off_response_text = _truncate_at_json_end(off_tokenizer.decode(off_response_ids, skip_special_tokens=True))
 
             # Generate defense action
             def_text = def_tokenizer.apply_chat_template(def_messages, tokenize=False, add_generation_prompt=True)
             def_ids = def_tokenizer(def_text, return_tensors="pt").to(device)
+            gen_kwargs = dict(max_new_tokens=MAX_COMPLETION_LENGTH, temperature=TEMPERATURE, do_sample=True)
+            if def_stop_ids:
+                gen_kwargs["eos_token_id"] = def_stop_ids
             with torch.no_grad():
-                def_out = def_model.generate(
-                    **def_ids, max_new_tokens=MAX_COMPLETION_LENGTH,
-                    temperature=TEMPERATURE, do_sample=True,
-                )
+                def_out = def_model.generate(**def_ids, **gen_kwargs)
             def_response_ids = def_out[0][def_ids["input_ids"].shape[1]:]
-            def_response_text = def_tokenizer.decode(def_response_ids, skip_special_tokens=True)
+            def_response_text = _truncate_at_json_end(def_tokenizer.decode(def_response_ids, skip_special_tokens=True))
 
             # Parse actions
             off_action = parse_offense_response(off_response_text)
@@ -114,6 +136,9 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
 
         offense_episodes.extend(drive_off)
         defense_episodes.extend(drive_def)
+
+        total_off_r = sum(r for _, _, r in drive_off)
+        print(f"  Drive {ep+1}/{n_episodes}: {len(drive_off)} plays, {obs.drive_result}, off_reward={total_off_r:.1f}", flush=True)
 
     return offense_episodes, defense_episodes
 
