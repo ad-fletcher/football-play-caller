@@ -40,8 +40,8 @@ TEMPERATURE = 0.7
 
 # Unsloth
 LOAD_4BIT = True
-FAST_INFERENCE = True
-GPU_MEMORY_UTIL = 0.4
+FAST_INFERENCE = False  # vLLM can only init once per process; use HF generate for two models
+GPU_MEMORY_UTIL = 0.5
 
 SAVE_EVERY = 10  # save every N rounds
 
@@ -235,9 +235,6 @@ def main():
         model_name=MODEL_NAME,
         max_seq_length=MAX_SEQ_LENGTH,
         load_in_4bit=LOAD_4BIT,
-        fast_inference=FAST_INFERENCE,
-        max_lora_rank=LORA_RANK,
-        gpu_memory_utilization=GPU_MEMORY_UTIL,
     )
     off_model = FastLanguageModel.get_peft_model(
         off_model, r=LORA_RANK, lora_alpha=LORA_RANK,
@@ -250,9 +247,6 @@ def main():
         model_name=MODEL_NAME,
         max_seq_length=MAX_SEQ_LENGTH,
         load_in_4bit=LOAD_4BIT,
-        fast_inference=FAST_INFERENCE,
-        max_lora_rank=LORA_RANK,
-        gpu_memory_utilization=GPU_MEMORY_UTIL,
     )
     def_model = FastLanguageModel.get_peft_model(
         def_model, r=LORA_RANK, lora_alpha=LORA_RANK,
@@ -273,18 +267,20 @@ def main():
     print(f"Starting adversarial training: {NUM_ROUNDS} rounds, {EPISODES_PER_ROUND} episodes/round")
 
     for round_num in range(1, NUM_ROUNDS + 1):
-        # Collect episodes
-        off_model.eval()
-        def_model.eval()
+        # Collect episodes (inference mode — disables dropout, enables 2x faster generation)
+        FastLanguageModel.for_inference(off_model)
+        FastLanguageModel.for_inference(def_model)
         off_episodes, def_episodes = collect_episodes(
             env, off_model, off_tokenizer, def_model, def_tokenizer,
             EPISODES_PER_ROUND, device,
         )
 
-        # Update offense
+        # Update offense (training mode — re-enables LoRA gradients)
+        FastLanguageModel.for_training(off_model)
         off_loss = reinforce_update(off_model, off_tokenizer, off_optimizer, off_episodes, device)
 
         # Update defense
+        FastLanguageModel.for_training(def_model)
         def_loss = reinforce_update(def_model, def_tokenizer, def_optimizer, def_episodes, device)
 
         # Log
@@ -296,14 +292,14 @@ def main():
         # Save checkpoints
         if round_num % SAVE_EVERY == 0:
             print(f"  Saving checkpoint at round {round_num}...")
-            off_model.save_lora(os.path.join(OUTPUT_DIR, f"offense_lora_r{round_num}"))
-            def_model.save_lora(os.path.join(OUTPUT_DIR, f"defense_lora_r{round_num}"))
+            off_model.save_pretrained(os.path.join(OUTPUT_DIR, f"offense_lora_r{round_num}"))
+            def_model.save_pretrained(os.path.join(OUTPUT_DIR, f"defense_lora_r{round_num}"))
             log.save(OUTPUT_DIR)
 
     # Final save
     print("Saving final models...")
-    off_model.save_lora(os.path.join(OUTPUT_DIR, "offense_lora_final"))
-    def_model.save_lora(os.path.join(OUTPUT_DIR, "defense_lora_final"))
+    off_model.save_pretrained(os.path.join(OUTPUT_DIR, "offense_lora_final"))
+    def_model.save_pretrained(os.path.join(OUTPUT_DIR, "defense_lora_final"))
     log.save(OUTPUT_DIR)
     print(f"Training complete! Results in {OUTPUT_DIR}/")
 
