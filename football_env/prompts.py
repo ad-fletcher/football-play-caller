@@ -94,8 +94,7 @@ def format_offense_obs(obs: GameObservation) -> list[dict]:
     )
 
     if obs.defense_history:
-        tendencies = _summarize_defense_history(obs.defense_history)
-        situation += f"\n\nDefense tendencies this drive:\n{tendencies}"
+        situation += f"\n\n{_format_defense_history(obs.defense_history)}"
 
     if obs.last_play_result:
         situation += f"\n\nLast play: {obs.last_play_result} for {obs.last_play_yards} yards."
@@ -116,8 +115,7 @@ def format_defense_obs(obs: GameObservation) -> list[dict]:
     )
 
     if obs.offense_history:
-        tendencies = _summarize_offense_history(obs.offense_history)
-        situation += f"\n\nOffense tendencies this drive:\n{tendencies}"
+        situation += f"\n\n{_format_offense_history(obs.offense_history)}"
 
     if obs.last_play_result:
         situation += f"\n\nLast play: {obs.last_play_result} for {obs.last_play_yards} yards."
@@ -213,16 +211,66 @@ def _clock_str(seconds: int) -> str:
     return f"{m}:{s:02d}"
 
 
-def _summarize_defense_history(history) -> str:
-    lines = []
-    for i, play in enumerate(history, 1):
-        lines.append(f"  Play {i}: {play.defFormation}, {play.pff_passCoverage} ({play.pff_manZone}), {play.passRushers} rushers → {play.result} ({play.yardsGained} yds)")
-    return "\n".join(lines)
+RECENT_DETAIL = 15  # show full detail for last N plays
 
 
-def _summarize_offense_history(history) -> str:
-    lines = []
-    for i, play in enumerate(history, 1):
+def _format_defense_history(history) -> str:
+    """Aggregate stats for older plays, detail for recent ones."""
+    parts = []
+
+    if len(history) > RECENT_DETAIL:
+        older = history[:-RECENT_DETAIL]
+        stats = _aggregate_defense(older)
+        parts.append(f"Defense summary ({len(older)} earlier plays): {stats}")
+
+    recent = history[-RECENT_DETAIL:]
+    offset = len(history) - len(recent)
+    detail_lines = []
+    for i, play in enumerate(recent, offset + 1):
+        detail_lines.append(f"  Play {i}: {play.defFormation}, {play.pff_passCoverage} ({play.pff_manZone}), {play.passRushers} rushers → {play.result} ({play.yardsGained} yds)")
+    parts.append("Recent defense:\n" + "\n".join(detail_lines))
+
+    return "\n".join(parts)
+
+
+def _format_offense_history(history) -> str:
+    """Aggregate stats for older plays, detail for recent ones."""
+    parts = []
+
+    if len(history) > RECENT_DETAIL:
+        older = history[:-RECENT_DETAIL]
+        stats = _aggregate_offense(older)
+        parts.append(f"Offense summary ({len(older)} earlier plays): {stats}")
+
+    recent = history[-RECENT_DETAIL:]
+    offset = len(history) - len(recent)
+    detail_lines = []
+    for i, play in enumerate(recent, offset + 1):
         detail = play.designedPass if play.playType != "run" else play.pff_runConceptPrimary
-        lines.append(f"  Play {i}: {play.offenseFormation} {play.playType} ({detail}) → {play.result} ({play.yardsGained} yds)")
-    return "\n".join(lines)
+        detail_lines.append(f"  Play {i}: {play.offenseFormation} {play.playType} ({detail}) → {play.result} ({play.yardsGained} yds)")
+    parts.append("Recent offense:\n" + "\n".join(detail_lines))
+
+    return "\n".join(parts)
+
+
+def _aggregate_defense(plays) -> str:
+    """Compact stats: formation counts, man/zone split, avg rushers, avg yards allowed."""
+    from collections import Counter
+    formations = Counter(p.defFormation for p in plays)
+    man_zone = Counter(p.pff_manZone for p in plays)
+    avg_rush = sum(p.passRushers for p in plays) / len(plays)
+    avg_yds = sum(p.yardsGained for p in plays) / len(plays)
+    top_forms = ", ".join(f"{f}({c})" for f, c in formations.most_common(3))
+    mz = "/".join(f"{k}:{v}" for k, v in man_zone.most_common())
+    return f"formations={top_forms} | {mz} | avg_rush={avg_rush:.1f} | avg_yds_allowed={avg_yds:.1f}"
+
+
+def _aggregate_offense(plays) -> str:
+    """Compact stats: run/pass split, top formations, avg yards."""
+    from collections import Counter
+    types = Counter(p.playType for p in plays)
+    formations = Counter(p.offenseFormation for p in plays)
+    avg_yds = sum(p.yardsGained for p in plays) / len(plays)
+    type_str = "/".join(f"{k}:{v}" for k, v in types.most_common())
+    top_forms = ", ".join(f"{f}({c})" for f, c in formations.most_common(3))
+    return f"{type_str} | formations={top_forms} | avg_yds={avg_yds:.1f}"

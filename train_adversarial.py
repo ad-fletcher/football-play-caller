@@ -27,7 +27,7 @@ from torch.optim import AdamW
 # Configuration
 # ──────────────────────────────────────────────
 MODEL_NAME = "unsloth/Qwen2.5-1.5B-Instruct"
-MAX_SEQ_LENGTH = 512
+MAX_SEQ_LENGTH = 2048
 LORA_RANK = 32
 OUTPUT_DIR = "checkpoints/adversarial"
 
