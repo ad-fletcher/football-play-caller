@@ -32,18 +32,18 @@ LORA_RANK = 32
 OUTPUT_DIR = "checkpoints/adversarial"
 
 # Training
-EPISODES_PER_ROUND = 16        # drives per collection round
-NUM_ROUNDS = 60                # total training rounds
+EPISODES_PER_ROUND = 32        # drives per collection round
+NUM_ROUNDS = 80                # total training rounds
 LEARNING_RATE = 1e-5
 MAX_COMPLETION_LENGTH = 80
 TEMPERATURE = 0.7
 
 # Phased training: (start_round, end_round, train_offense, train_defense)
 TRAINING_PHASES = [
-    (1,  10, True,  True),   # Phase 0: both learn basics (valid JSON, formations)
-    (11, 30, True,  False),  # Phase 1: offense learns to exploit static defense
-    (31, 50, False, True),   # Phase 2: defense adapts to trained offense
-    (51, 60, True,  True),   # Phase 3: co-adaptation
+    (1,  15, True,  True),   # Phase 0: both learn basics (valid JSON, formations)
+    (16, 40, True,  False),  # Phase 1: offense learns to exploit static defense
+    (41, 65, False, True),   # Phase 2: defense adapts to trained offense
+    (66, 80, True,  True),   # Phase 3: co-adaptation
 ]
 
 # Unsloth
@@ -89,6 +89,7 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
 
     offense_episodes = []
     defense_episodes = []
+    all_drive_results = []
 
     for ep in range(n_episodes):
         obs = env.reset()
@@ -136,11 +137,12 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
 
         offense_episodes.extend(drive_off)
         defense_episodes.extend(drive_def)
+        all_drive_results.append(obs.drive_result)
 
         total_off_r = sum(r for _, _, r in drive_off)
         print(f"  Drive {ep+1}/{n_episodes}: {len(drive_off)} plays, {obs.drive_result}, off_reward={total_off_r:.1f}", flush=True)
 
-    return offense_episodes, defense_episodes
+    return offense_episodes, defense_episodes, all_drive_results
 
 
 # ──────────────────────────────────────────────
@@ -195,6 +197,9 @@ class TrainingLog:
     offense_losses: list = field(default_factory=list)
     defense_losses: list = field(default_factory=list)
     drive_results: list = field(default_factory=list)
+    td_rates: list = field(default_factory=list)
+    turnover_rates: list = field(default_factory=list)
+    punt_rates: list = field(default_factory=list)
 
     def log_round(self, round_num, off_episodes, def_episodes, off_loss, def_loss, drive_results):
         self.rounds.append(round_num)
@@ -206,6 +211,14 @@ class TrainingLog:
         self.defense_losses.append(def_loss)
         self.drive_results.append(drive_results)
 
+        # Compute outcome rates
+        n = max(len(drive_results), 1)
+        from collections import Counter
+        counts = Counter(drive_results)
+        self.td_rates.append(counts.get("touchdown", 0) / n)
+        self.turnover_rates.append((counts.get("interception", 0) + counts.get("fumble_lost", 0)) / n)
+        self.punt_rates.append(counts.get("punt", 0) / n)
+
     def save(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)
         with open(os.path.join(output_dir, "training_log.json"), "w") as f:
@@ -216,37 +229,131 @@ class TrainingLog:
                 "offense_losses": self.offense_losses,
                 "defense_losses": self.defense_losses,
                 "drive_results": self.drive_results,
+                "td_rates": self.td_rates,
+                "turnover_rates": self.turnover_rates,
+                "punt_rates": self.punt_rates,
             }, f, indent=2)
 
-        # Plot reward curves
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        self._plot_rewards(output_dir)
+        self._plot_outcomes(output_dir)
+        self._plot_losses(output_dir)
+        self._plot_combined(output_dir)
 
-        ax = axes[0]
-        ax.plot(self.rounds, self.offense_rewards, "b-", alpha=0.5, label="Offense")
-        ax.plot(self.rounds, self.defense_rewards, "r-", alpha=0.5, label="Defense")
-        w = min(10, len(self.rounds))
+    def _add_phase_bands(self, ax):
+        """Add shaded background bands for each training phase."""
+        colors = ["#e8e8e8", "#cce5ff", "#ffe0cc", "#d4edda"]
+        labels = ["Both train", "Off trains", "Def trains", "Both train"]
+        for i, (start, end, _, _) in enumerate(TRAINING_PHASES):
+            ax.axvspan(start - 0.5, end + 0.5, alpha=0.3, color=colors[i % len(colors)], label=labels[i] if i < len(labels) else "")
+
+    def _plot_rewards(self, output_dir):
+        fig, ax = plt.subplots(figsize=(12, 5))
+        self._add_phase_bands(ax)
+        ax.plot(self.rounds, self.offense_rewards, "b-", alpha=0.4, linewidth=1)
+        ax.plot(self.rounds, self.defense_rewards, "r-", alpha=0.4, linewidth=1)
+        w = min(5, len(self.rounds))
         if w > 1:
             off_ma = np.convolve(self.offense_rewards, np.ones(w)/w, mode="valid")
             def_ma = np.convolve(self.defense_rewards, np.ones(w)/w, mode="valid")
-            ax.plot(self.rounds[w-1:], off_ma, "b-", lw=2, label=f"Off MA-{w}")
-            ax.plot(self.rounds[w-1:], def_ma, "r-", lw=2, label=f"Def MA-{w}")
+            ax.plot(self.rounds[w-1:], off_ma, "b-", lw=2.5, label="Offense (MA)")
+            ax.plot(self.rounds[w-1:], def_ma, "r-", lw=2.5, label="Defense (MA)")
+        ax.set_xlabel("Round", fontsize=12)
+        ax.set_ylabel("Mean Reward per Play", fontsize=12)
+        ax.set_title("Adversarial Training: Reward Curves", fontsize=14, fontweight="bold")
+        ax.legend(loc="upper left", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(os.path.join(output_dir, "reward_curves.png"), dpi=150)
+        plt.close(fig)
+
+    def _plot_outcomes(self, output_dir):
+        fig, ax = plt.subplots(figsize=(12, 5))
+        self._add_phase_bands(ax)
+        w = min(5, len(self.rounds))
+        if w > 1 and len(self.td_rates) >= w:
+            td_ma = np.convolve(self.td_rates, np.ones(w)/w, mode="valid")
+            to_ma = np.convolve(self.turnover_rates, np.ones(w)/w, mode="valid")
+            punt_ma = np.convolve(self.punt_rates, np.ones(w)/w, mode="valid")
+            ax.plot(self.rounds[w-1:], td_ma, "g-", lw=2.5, label="TD rate")
+            ax.plot(self.rounds[w-1:], to_ma, "r-", lw=2.5, label="Turnover rate")
+            ax.plot(self.rounds[w-1:], punt_ma, "gray", lw=2.5, label="Punt rate")
+        else:
+            ax.plot(self.rounds, self.td_rates, "g-", lw=2, label="TD rate")
+            ax.plot(self.rounds, self.turnover_rates, "r-", lw=2, label="Turnover rate")
+            ax.plot(self.rounds, self.punt_rates, "gray", lw=2, label="Punt rate")
+        ax.set_xlabel("Round", fontsize=12)
+        ax.set_ylabel("Rate per Drive", fontsize=12)
+        ax.set_title("Drive Outcomes Over Training", fontsize=14, fontweight="bold")
+        ax.set_ylim(0, 1)
+        ax.legend(loc="upper right", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(os.path.join(output_dir, "outcome_curves.png"), dpi=150)
+        plt.close(fig)
+
+    def _plot_losses(self, output_dir):
+        fig, ax = plt.subplots(figsize=(12, 5))
+        self._add_phase_bands(ax)
+        ax.plot(self.rounds, self.offense_losses, "b-", alpha=0.7, lw=1.5, label="Offense Loss")
+        ax.plot(self.rounds, self.defense_losses, "r-", alpha=0.7, lw=1.5, label="Defense Loss")
+        ax.set_xlabel("Round", fontsize=12)
+        ax.set_ylabel("Policy Loss", fontsize=12)
+        ax.set_title("REINFORCE Policy Losses", fontsize=14, fontweight="bold")
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(os.path.join(output_dir, "loss_curves.png"), dpi=150)
+        plt.close(fig)
+
+    def _plot_combined(self, output_dir):
+        """Single figure with all three panels — good for the demo."""
+        fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+        # Rewards
+        ax = axes[0]
+        self._add_phase_bands(ax)
+        ax.plot(self.rounds, self.offense_rewards, "b-", alpha=0.4, lw=1)
+        ax.plot(self.rounds, self.defense_rewards, "r-", alpha=0.4, lw=1)
+        w = min(5, len(self.rounds))
+        if w > 1:
+            off_ma = np.convolve(self.offense_rewards, np.ones(w)/w, mode="valid")
+            def_ma = np.convolve(self.defense_rewards, np.ones(w)/w, mode="valid")
+            ax.plot(self.rounds[w-1:], off_ma, "b-", lw=2.5, label="Offense")
+            ax.plot(self.rounds[w-1:], def_ma, "r-", lw=2.5, label="Defense")
         ax.set_xlabel("Round")
         ax.set_ylabel("Mean Reward")
-        ax.set_title("Adversarial Training: Rewards")
-        ax.legend()
+        ax.set_title("Rewards")
+        ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
 
+        # Outcomes
         ax = axes[1]
-        ax.plot(self.rounds, self.offense_losses, "b-", alpha=0.5, label="Offense Loss")
-        ax.plot(self.rounds, self.defense_losses, "r-", alpha=0.5, label="Defense Loss")
+        self._add_phase_bands(ax)
+        if w > 1 and len(self.td_rates) >= w:
+            ax.plot(self.rounds[w-1:], np.convolve(self.td_rates, np.ones(w)/w, mode="valid"), "g-", lw=2.5, label="TD")
+            ax.plot(self.rounds[w-1:], np.convolve(self.turnover_rates, np.ones(w)/w, mode="valid"), "r-", lw=2.5, label="Turnover")
+            ax.plot(self.rounds[w-1:], np.convolve(self.punt_rates, np.ones(w)/w, mode="valid"), "gray", lw=2.5, label="Punt")
+        ax.set_xlabel("Round")
+        ax.set_ylabel("Rate")
+        ax.set_title("Drive Outcomes")
+        ax.set_ylim(0, 1)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+        # Losses
+        ax = axes[2]
+        self._add_phase_bands(ax)
+        ax.plot(self.rounds, self.offense_losses, "b-", lw=1.5, alpha=0.7, label="Offense")
+        ax.plot(self.rounds, self.defense_losses, "r-", lw=1.5, alpha=0.7, label="Defense")
         ax.set_xlabel("Round")
         ax.set_ylabel("Loss")
-        ax.set_title("Policy Losses")
-        ax.legend()
+        ax.set_title("Policy Loss")
+        ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
 
+        fig.suptitle("Adversarial Football: Offense vs Defense Training", fontsize=16, fontweight="bold", y=1.02)
         fig.tight_layout()
-        fig.savefig(os.path.join(output_dir, "training_curves.png"), dpi=150)
+        fig.savefig(os.path.join(output_dir, "training_dashboard.png"), dpi=150, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -315,7 +422,7 @@ def main():
         # Collect episodes (inference mode — disables dropout, enables 2x faster generation)
         FastLanguageModel.for_inference(off_model)
         FastLanguageModel.for_inference(def_model)
-        off_episodes, def_episodes = collect_episodes(
+        off_episodes, def_episodes, drive_results = collect_episodes(
             env, off_model, off_tokenizer, def_model, def_tokenizer,
             EPISODES_PER_ROUND, device,
         )
@@ -335,9 +442,11 @@ def main():
         # Log
         off_mean = np.mean([r for _, _, r in off_episodes])
         def_mean = np.mean([r for _, _, r in def_episodes])
-        log.log_round(round_num, off_episodes, def_episodes, off_loss, def_loss, {})
+        log.log_round(round_num, off_episodes, def_episodes, off_loss, def_loss, drive_results)
         phase_str = f"[off={'T' if train_offense else 'F'} def={'T' if train_defense else 'F'}]"
-        print(f"Round {round_num}/{NUM_ROUNDS} {phase_str} | Off reward: {off_mean:.3f} | Def reward: {def_mean:.3f} | Off loss: {off_loss:.4f} | Def loss: {def_loss:.4f} | Episodes: {len(off_episodes)} plays")
+        from collections import Counter
+        result_summary = ", ".join(f"{k}:{v}" for k, v in Counter(drive_results).most_common())
+        print(f"Round {round_num}/{NUM_ROUNDS} {phase_str} | Off reward: {off_mean:.3f} | Def reward: {def_mean:.3f} | Off loss: {off_loss:.4f} | Def loss: {def_loss:.4f} | {result_summary}", flush=True)
 
         # Save checkpoints
         if round_num % SAVE_EVERY == 0:
