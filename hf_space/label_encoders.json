@@ -1,0 +1,103 @@
+{
+  "offenseFormation": [
+    "EMPTY",
+    "I_FORM",
+    "PISTOL",
+    "SHOTGUN",
+    "SINGLEBACK",
+    NaN
+  ],
+  "receiverAlignment": [
+    "1x0",
+    "1x1",
+    "2x0",
+    "2x1",
+    "2x2",
+    "3x0",
+    "3x1",
+    "3x2",
+    "3x3",
+    "4x1",
+    "unknown"
+  ],
+  "playType": [
+    "pass",
+    "play_action",
+    "run"
+  ],
+  "pff_runConceptPrimary": [
+    "COUNTER",
+    "DRAW",
+    "FB RUN",
+    "INSIDE ZONE",
+    "MAN",
+    "OUTSIDE ZONE",
+    "POWER",
+    "PULL LEAD",
+    "SNEAK",
+    "TRAP",
+    "TRICK",
+    "UNDEFINED",
+    "none"
+  ],
+  "defFormation": [
+    "3-4",
+    "4-3",
+    "5-2",
+    "Dime (2-3-6)",
+    "Dime (3-2-6)",
+    "Dime (4-1-6)",
+    "Nickel (2-4-5)",
+    "Nickel (3-3-5)",
+    "Nickel (4-2-5)",
+    "Other"
+  ],
+  "pff_passCoverage": [
+    "2-Man",
+    "Bracket",
+    "Cover 6-Left",
+    "Cover-0",
+    "Cover-1",
+    "Cover-1 Double",
+    "Cover-2",
+    "Cover-3",
+    "Cover-3 Cloud Left",
+    "Cover-3 Cloud Right",
+    "Cover-3 Double Cloud",
+    "Cover-3 Seam",
+    "Cover-6 Right",
+    "Goal Line",
+    "Miscellaneous",
+    "Prevent",
+    "Quarters",
+    "Red Zone",
+    "none"
+  ],
+  "pff_manZone": [
+    "Man",
+    "Other",
+    "Zone",
+    "none"
+  ],
+  "designedPass": [
+    "deep_left",
+    "deep_middle",
+    "deep_right",
+    "medium_left",
+    "medium_middle",
+    "medium_right",
+    "none",
+    "screen_left",
+    "screen_middle",
+    "screen_right",
+    "short_left",
+    "short_middle",
+    "short_right"
+  ],
+  "outcome": [
+    "fumble_lost",
+    "interception",
+    "normal",
+    "touchdown"
+  ]
+}

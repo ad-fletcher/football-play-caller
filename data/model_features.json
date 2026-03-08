@@ -1,0 +1,73 @@
+{
+  "numeric_features": [
+    "quarter",
+    "down",
+    "yardsToGo",
+    "gameClock_seconds",
+    "absoluteYardlineNumber",
+    "isDropback",
+    "passRushers",
+    "score_diff",
+    "is_third_down_long",
+    "red_zone"
+  ],
+  "categorical_features": [
+    "offenseFormation",
+    "receiverAlignment",
+    "playType",
+    "pff_runConceptPrimary",
+    "defFormation",
+    "pff_passCoverage",
+    "pff_manZone",
+    "designedPass"
+  ],
+  "feature_cols": [
+    "quarter",
+    "down",
+    "yardsToGo",
+    "gameClock_seconds",
+    "absoluteYardlineNumber",
+    "isDropback",
+    "passRushers",
+    "score_diff",
+    "is_third_down_long",
+    "red_zone",
+    "offenseFormation_enc",
+    "receiverAlignment_enc",
+    "playType_enc",
+    "pff_runConceptPrimary_enc",
+    "defFormation_enc",
+    "pff_passCoverage_enc",
+    "pff_manZone_enc",
+    "designedPass_enc"
+  ],
+  "categorical_indices": [
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "outcome_mapping": {
+    "0": "fumble_lost",
+    "1": "interception",
+    "2": "normal",
+    "3": "touchdown"
+  },
+  "quantile_levels": [
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    0.9
+  ],
+  "outcome_regressor_types": {
+    "normal": "quantile",
+    "touchdown": "quantile",
+    "interception": "quantile",
+    "fumble_lost": "quantile"
+  }
+}

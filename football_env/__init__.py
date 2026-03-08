@@ -1,2 +1,2 @@
-from .models import FootballAction, FootballObservation
-from .client import FootballEnv
+from .models import GameAction, GameObservation, OffenseAction, DefenseAction, PlayRecord
+from .client import FootballDriveClient

@@ -59,29 +59,35 @@ Short/Mid/Deep Pass × Left/Middle/Right, Run Inside/Outside × Left/Right, Sack
 Nickel (4-2-5), Nickel (3-3-5), Nickel (2-4-5), 3-4, 4-3, Dime (2-3-6), Dime (4-1-6), Dime (3-2-6), 5-2, 5-3 Heavy, 6-2 Goal Line, 4-4, Quarter
 - Classified by counting DL/LB/DB roster positions on field at snap
 
-## Action Space (15 actions)
-0-2: SHOTGUN run/pass/play_action
-3-5: UNDER_CENTER run/pass/play_action
-6-8: PISTOL run/pass/play_action
-9-10: I_FORM run/pass
-11-12: SINGLEBACK run/pass
-13: PUNT (4th down only)
-14: FIELD_GOAL (4th down, in range)
+## Action Space (Adversarial — Two Agents)
+
+### Offense Action (Hierarchical)
+Level 1: offenseFormation — 7 choices (SHOTGUN, SINGLEBACK, EMPTY, I_FORM, PISTOL, JUMBO, WILDCAT)
+Level 2: playType — run, pass, play_action, punt, field_goal
+Level 3: designedPass + receiverAlignment (pass) or pff_runConceptPrimary (run)
+
+### Defense Action (Hierarchical)
+Level 1: defFormation — 10 choices (3-4, 4-3, Nickel variants, Dime variants, 5-2, Other)
+Level 2: pff_manZone — Man, Zone
+Level 3: pff_passCoverage — constrained by man/zone
+Level 4: passRushers — constrained by formation
+
+### Composite
+GameAction = OffenseAction + DefenseAction (submitted together each step)
 
 ## Observation Space
-down, distance, field_position, quarter, game_clock, score_diff, defense_formation, defenders_in_box, legal_actions, game_phase, done, reward
+down, yardsToGo, absoluteYardlineNumber, quarter, gameClock_seconds, score_diff, is_third_down_long, red_zone, last_play_yards, last_play_result, offense_history, defense_history, offense_reward, defense_reward, drive_result
 
-## Lookup Table Design
-- Key: `(down, distance_bucket, field_zone, formation, play_type)`
-- Value: list of raw yardsGained values → sample with `random.choice()`
-- Distance buckets: short(1-3), medium(4-7), long(8-13), very_long(14+)
-- Field zones: own_deep(0-20), own_territory(20-40), midfield(40-60), opp_territory(60-80), red_zone(80-100)
-- Sparse fallback: exact → drop field_zone → drop formation → play_type only (min 10 plays)
+## Reward (Adversarial)
+### Offense: per-play yards*0.1 + first down +1 + drive-end (+7 TD, +3 FG, -2 turnover, 0 punt)
+### Defense: per-play -yards*0.1 + drive-end (-7 TD, -3 FG, +5 turnover, +1 punt)
+### Contradiction penalty: -3 for invalid action combos (both agents)
 
-## Reward
-- Raw `yardsGained` per play
-- Turnover: -7 (sampled probabilistically per bucket)
-- Stretch: drive-end bonuses (+7 TD, +3 FG)
+## Play Outcome Model
+- Two-stage: outcome classifier → quantile regressors (yards|outcome)
+- Replaces lookup table for outcome resolution
+- Module: `football_env/play_outcome_model.py`
+- Data: `data/outcome_classifier.joblib` + 20 quantile regressor joblib files
 
 ## OpenEnv Framework
 - Install: `pip install openenv-core` (or from GitHub for latest)
@@ -103,7 +109,17 @@ down, distance, field_position, quarter, game_clock, score_diff, defense_formati
 
 ## Files
 - `nfl_tracking.ipynb` — data exploration notebook with visualizations
-- `process_nfl_data.ipynb` — lookup table builder (in progress)
-- `data/` — NFL dataset CSVs
+- `process_nfl_data.ipynb` — play outcome model builder
+- `data/` — NFL dataset CSVs + trained model files
 - `data/defensive_formations.csv` — derived defensive formation labels
-- `football_env/` — RL environment (to be built)
+- `football_env/` — adversarial RL environment package
+  - `models.py` — GameAction, GameObservation, OffenseAction, DefenseAction, PlayRecord
+  - `validation.py` — contradiction detection for both agents
+  - `prompts.py` — LLM prompt formatting and response parsing
+  - `play_outcome_model.py` — two-stage play outcome prediction
+  - `server/environment.py` — FootballDriveEnvironment (full drive simulation)
+  - `server/app.py` — OpenEnv server app
+  - `client.py` — FootballDriveClient
+- `train_adversarial.py` — adversarial REINFORCE training script (offense vs defense)
+- `tests/` — validation, environment, and smoke tests
+- `hf_space/` — HF Spaces deployment files

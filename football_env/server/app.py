@@ -1,9 +1,9 @@
 import uvicorn
 from openenv.core.env_server import create_app
-from .environment import FootballEnvironment
-from ..models import FootballAction, FootballObservation
+from .environment import FootballDriveEnvironment
+from ..models import GameAction, GameObservation
 
-app = create_app(FootballEnvironment, FootballAction, FootballObservation, env_name="football_env")
+app = create_app(FootballDriveEnvironment, GameAction, GameObservation, env_name="football_drive")
 
 
 def main():

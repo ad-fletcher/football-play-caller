@@ -1,17 +1,17 @@
-name: football_env
-version: 0.1.0
-description: "NFL play-calling RL environment — choose formation + play type against random defense"
+name: football_drive
+version: 0.2.0
+description: "Adversarial NFL play-calling RL environment — offense vs defense over full drives"
 
 client:
-  class_name: FootballEnv
+  class_name: FootballDriveClient
   module: football_env.client
 
 action:
-  class_name: FootballAction
+  class_name: GameAction
   module: football_env.models
 
 observation:
-  class_name: FootballObservation
+  class_name: GameObservation
   module: football_env.models
 
 default_image: football-env:latest
