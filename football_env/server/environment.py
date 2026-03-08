@@ -127,11 +127,11 @@ class FootballDriveEnvironment(Environment):
 
         # Check for turnovers
         if outcome == "interception":
-            self._append_history(action, yards, "interception")
+            self._append_history(action, 0.0, "interception")
             return self._build_observation(
                 done=True, offense_reward=offense_reward + -2.0,
                 defense_reward=defense_reward + 5.0,
-                last_play_yards=yards, last_play_result="interception",
+                last_play_yards=0.0, last_play_result="interception",
                 drive_result="interception",
             )
 
@@ -143,6 +143,14 @@ class FootballDriveEnvironment(Environment):
                 last_play_yards=yards, last_play_result="fumble_lost",
                 drive_result="fumble_lost",
             )
+
+        # Incompletion — no yards gained
+        if outcome == "incompletion":
+            yards = 0.0
+
+        # Sack — ensure negative yards
+        if outcome == "sack":
+            yards = min(yards, -1.0)
 
         # Normal play or touchdown outcome from model
         new_field_pos = gs["absoluteYardlineNumber"] + yards

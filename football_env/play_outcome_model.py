@@ -1,5 +1,7 @@
 """Two-stage play outcome model for the RL environment.
 
+6-class outcomes: completion, incompletion, sack, touchdown, interception, fumble_lost
+
 Usage:
     model = PlayOutcomeModel('data/')
     outcome, yards = model.predict(
@@ -47,7 +49,7 @@ class PlayOutcomeModel:
         # Load classifier
         self._clf = joblib.load(data_path / "outcome_classifier.joblib")
 
-        # Load quantile regressors
+        # Load per-outcome regressors
         self._regressors = {}
         for oc, reg_type in self._feat_data["outcome_regressor_types"].items():
             if reg_type == "quantile":
@@ -55,14 +57,15 @@ class PlayOutcomeModel:
                 for q in self._quantile_levels:
                     models[q] = joblib.load(data_path / f"yards_q{q:.2f}_{oc}.joblib")
                 self._regressors[oc] = {"type": "quantile", "models": models}
-            else:
+            elif reg_type == "empirical":
                 with open(data_path / f"yards_{oc}.json") as f:
                     emp = json.load(f)
                 self._regressors[oc] = {"type": "empirical", "yards": emp["yards"]}
+            elif reg_type == "fixed":
+                self._regressors[oc] = {"type": "fixed", "yards": 0.0}
 
     def _encode_features(self, **kwargs) -> np.ndarray:
         """Encode raw feature values into the model's expected format."""
-        # Derive binary features if not provided
         down = kwargs.get("down", 1)
         yards_to_go = kwargs.get("yardsToGo", 10)
         field_pos = kwargs.get("absoluteYardlineNumber", 25)
@@ -73,14 +76,12 @@ class PlayOutcomeModel:
             kwargs["red_zone"] = int(field_pos >= 80)
 
         row = []
-        # Numeric features
         for col in self._numeric_features:
             row.append(float(kwargs.get(col, 0)))
 
-        # Categorical features — encode to ordinal codes
         for col in self._categorical_features:
             val = str(kwargs.get(col, "none"))
-            code = self._cat_encoders[col].get(val, -1)  # -1 for unknown
+            code = self._cat_encoders[col].get(val, -1)
             row.append(float(code))
 
         # Must match the dtype from training (DataFrame .values with mixed types → object)
@@ -99,8 +100,8 @@ class PlayOutcomeModel:
         """Predict play outcome and yards gained.
 
         Returns:
-            (outcome, yards) where outcome is one of
-            'normal', 'touchdown', 'interception', 'fumble_lost'
+            (outcome, yards) where outcome is one of:
+            'completion', 'incompletion', 'sack', 'touchdown', 'interception', 'fumble_lost'
         """
         X = self._encode_features(**kwargs)
 
@@ -114,8 +115,10 @@ class PlayOutcomeModel:
         if info["type"] == "quantile":
             q_vals = [info["models"][q].predict(X)[0] for q in self._quantile_levels]
             yards = self._sample_from_quantiles(q_vals)
-        else:
+        elif info["type"] == "empirical":
             yards = random.choice(info["yards"])
+        else:  # fixed
+            yards = info["yards"]
 
         return outcome, yards
 
@@ -131,6 +134,8 @@ class PlayOutcomeModel:
         info = self._regressors[outcome]
         if info["type"] == "quantile":
             return {q: float(info["models"][q].predict(X)[0]) for q in self._quantile_levels}
-        else:
+        elif info["type"] == "empirical":
             yards = info["yards"]
             return {q: float(np.percentile(yards, q * 100)) for q in self._quantile_levels}
+        else:
+            return {q: info["yards"] for q in self._quantile_levels}

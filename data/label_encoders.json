@@ -95,9 +95,11 @@
     "short_right"
   ],
   "outcome": [
+    "completion",
     "fumble_lost",
+    "incompletion",
     "interception",
-    "normal",
+    "sack",
     "touchdown"
   ]
 }

@@ -75,8 +75,8 @@ def _truncate_at_json_end(text: str) -> str:
     return text
 
 
-def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_episodes, device):
-    """Roll out full drives, collect (prompt_ids, response_ids, reward) per agent."""
+def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_episodes, device, round_num=0):
+    """Roll out full drives, collect (prompt_ids, response_ids, reward) per agent + play-by-play log."""
     from football_env.models import GameAction
     from football_env.prompts import (
         format_offense_obs, format_defense_obs,
@@ -91,12 +91,23 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
     defense_episodes = []
     all_drive_results = []
 
+    all_plays = []  # play-by-play log
+
     for ep in range(n_episodes):
         obs = env.reset()
         drive_off = []
         drive_def = []
+        play_num = 0
 
         while not obs.done:
+            # Snapshot pre-play state
+            pre_state = {
+                "down": obs.down, "yardsToGo": obs.yardsToGo,
+                "yardline": obs.absoluteYardlineNumber,
+                "quarter": obs.quarter, "clock": obs.gameClock_seconds,
+                "score_diff": obs.score_diff,
+            }
+
             # Format prompts
             off_messages = format_offense_obs(obs)
             def_messages = format_defense_obs(obs)
@@ -135,6 +146,22 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
             drive_off.append((off_text, off_response_text, obs.offense_reward))
             drive_def.append((def_text, def_response_text, obs.defense_reward))
 
+            # Log play-by-play
+            play_num += 1
+            all_plays.append({
+                "round": round_num, "drive": ep + 1, "play": play_num,
+                **pre_state,
+                "offense": off_action.model_dump(),
+                "defense": def_action.model_dump(),
+                "raw_offense_response": off_response_text,
+                "raw_defense_response": def_response_text,
+                "result": obs.last_play_result,
+                "yards": obs.last_play_yards,
+                "offense_reward": obs.offense_reward,
+                "defense_reward": obs.defense_reward,
+                "drive_result": obs.drive_result if obs.done else None,
+            })
+
         offense_episodes.extend(drive_off)
         defense_episodes.extend(drive_def)
         all_drive_results.append(obs.drive_result)
@@ -142,7 +169,7 @@ def collect_episodes(env, off_model, off_tokenizer, def_model, def_tokenizer, n_
         total_off_r = sum(r for _, _, r in drive_off)
         print(f"  Drive {ep+1}/{n_episodes}: {len(drive_off)} plays, {obs.drive_result}, off_reward={total_off_r:.1f}", flush=True)
 
-    return offense_episodes, defense_episodes, all_drive_results
+    return offense_episodes, defense_episodes, all_drive_results, all_plays
 
 
 # ──────────────────────────────────────────────
@@ -404,6 +431,7 @@ def main():
 
     # ── Training loop ──
     log = TrainingLog()
+    all_plays = []  # play-by-play across all rounds
     print(f"Starting adversarial training: {NUM_ROUNDS} rounds, {EPISODES_PER_ROUND} episodes/round")
     print(f"Training phases:")
     for start, end, train_off, train_def in TRAINING_PHASES:
@@ -422,10 +450,11 @@ def main():
         # Collect episodes (inference mode — disables dropout, enables 2x faster generation)
         FastLanguageModel.for_inference(off_model)
         FastLanguageModel.for_inference(def_model)
-        off_episodes, def_episodes, drive_results = collect_episodes(
+        off_episodes, def_episodes, drive_results, plays = collect_episodes(
             env, off_model, off_tokenizer, def_model, def_tokenizer,
-            EPISODES_PER_ROUND, device,
+            EPISODES_PER_ROUND, device, round_num=round_num,
         )
+        all_plays.extend(plays)
 
         # Update offense
         off_loss = 0.0
@@ -454,11 +483,15 @@ def main():
             off_model.save_pretrained(os.path.join(OUTPUT_DIR, f"offense_lora_r{round_num}"))
             def_model.save_pretrained(os.path.join(OUTPUT_DIR, f"defense_lora_r{round_num}"))
             log.save(OUTPUT_DIR)
+            with open(os.path.join(OUTPUT_DIR, "play_by_play.json"), "w") as f:
+                json.dump(all_plays, f)
 
     # Final save
     print("Saving final models...")
     off_model.save_pretrained(os.path.join(OUTPUT_DIR, "offense_lora_final"))
     def_model.save_pretrained(os.path.join(OUTPUT_DIR, "defense_lora_final"))
+    with open(os.path.join(OUTPUT_DIR, "play_by_play.json"), "w") as f:
+        json.dump(all_plays, f)
     log.save(OUTPUT_DIR)
     print(f"Training complete! Results in {OUTPUT_DIR}/")
 

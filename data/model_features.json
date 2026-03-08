@@ -52,10 +52,12 @@
     17
   ],
   "outcome_mapping": {
-    "0": "fumble_lost",
-    "1": "interception",
-    "2": "normal",
-    "3": "touchdown"
+    "0": "completion",
+    "1": "fumble_lost",
+    "2": "incompletion",
+    "3": "interception",
+    "4": "sack",
+    "5": "touchdown"
   },
   "quantile_levels": [
     0.1,
@@ -65,9 +67,11 @@
     0.9
   ],
   "outcome_regressor_types": {
-    "normal": "quantile",
-    "touchdown": "quantile",
-    "interception": "quantile",
-    "fumble_lost": "quantile"
+    "completion": "quantile",
+    "fumble_lost": "empirical",
+    "incompletion": "fixed",
+    "interception": "fixed",
+    "sack": "empirical",
+    "touchdown": "quantile"
   }
 }
