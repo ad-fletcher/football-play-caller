@@ -100,7 +100,7 @@ def run_drives(env, off_model, off_tokenizer, def_model, def_tokenizer,
             if def_stop_ids:
                 gen_kwargs["eos_token_id"] = def_stop_ids
             with torch.no_grad():
-                def_out = def_model.generate(**off_ids, **gen_kwargs)
+                def_out = def_model.generate(**def_ids, **gen_kwargs)
             def_response_ids = def_out[0][def_ids["input_ids"].shape[1]:]
             def_response_text = _truncate_at_json_end(def_tokenizer.decode(def_response_ids, skip_special_tokens=True))
 
