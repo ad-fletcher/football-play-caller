@@ -1,0 +1,18 @@
+name: football_env
+version: 0.1.0
+description: "NFL play-calling RL environment — choose formation + play type against random defense"
+
+client:
+  class_name: FootballEnv
+  module: football_env.client
+
+action:
+  class_name: FootballAction
+  module: football_env.models
+
+observation:
+  class_name: FootballObservation
+  module: football_env.models
+
+default_image: football-env:latest
+spec_version: 1
